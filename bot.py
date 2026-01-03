@@ -20,8 +20,9 @@ class GM:
             "onchain_gm": {"contract": "0x363cC75a89aE5673b427a1Fa98AFc48FfDE7Ba43"},
             "deploy": {
                 "contract": "0xa3d9Fbd0edB10327ECB73D2C72622E505dF468a2",
-                "amount": 1, # Manual Hash အတိုင်း 1 USDC အဖြစ် ပြောင်းလဲထားသည်
-                "input_data": "0x6a166299" # Manual Success Method ID
+                "amount": 1, 
+                # Screenshot 2 အရ deploy() call အတွက် Method ID မှာ 0x775c300c ဖြစ်ပါသည်
+                "input_data": "0x775c300c" 
             }
         }
         self.REFERRER = "0x0000000000000000000000000000000000000000"
@@ -80,9 +81,9 @@ class GM:
 
     async def perform_deploy(self, account_key, address, web3):
         try:
-            # 1 USDC အဖြစ် manual hash အတိုင်း အတိအကျ ပို့ပါမည်
             value = web3.to_wei(self.ARC_NETWORK["deploy"]["amount"], 'ether')
             
+            # Screenshot 2 အရ Method ID 0x775c300c ကို အသုံးပြု၍ Deploy function ခေါ်ဆိုပါမည်
             tx = {
                 "to": web3.to_checksum_address(self.ARC_NETWORK["deploy"]["contract"]),
                 "from": address,
