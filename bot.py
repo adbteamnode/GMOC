@@ -31,7 +31,7 @@ class GM:
                 "contract": "0xa3d9Fbd0edB10327ECB73D2C72622E505dF468a2",
                 "amount": 1,
             },
-            "gas_fee": 1.0
+            "gas_fee": 1.0 # Gwei
         }
         self.CONTRACT_ABI = [
             {"type": "function", "name": "timeUntilNextGM", "stateMutability": "view", "inputs": [{"internalType": "address", "name": "user", "type": "address"}], "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}]},
@@ -61,94 +61,70 @@ class GM:
 
     async def load_proxies(self):
         filename = "proxy.txt"
-        if not os.path.exists(filename):
-            self.log(f"{Fore.RED}proxy.txt file မတွေ့ပါ။")
-            return
+        if not os.path.exists(filename): return
         with open(filename, 'r') as f:
             self.proxies = [line.strip() for line in f if line.strip()]
         self.log(f"{Fore.GREEN}Total Proxies: {len(self.proxies)}")
 
-    def check_proxy_schemes(self, proxies):
-        schemes = ["http://", "https://", "socks4://", "socks5://"]
-        return proxies if any(proxies.startswith(s) for s in schemes) else f"http://{proxies}"
-
     def get_next_proxy_for_account(self, account):
         if not self.proxies: return None
         if account not in self.account_proxies:
-            proxy = self.check_proxy_schemes(self.proxies[self.proxy_index])
+            proxy = self.proxies[self.proxy_index]
+            if not any(proxy.startswith(s) for s in ["http://", "https://", "socks4://", "socks5://"]):
+                proxy = f"http://{proxy}"
             self.account_proxies[account] = proxy
             self.proxy_index = (self.proxy_index + 1) % len(self.proxies)
         return self.account_proxies[account]
 
-    def rotate_proxy_for_account(self, account):
-        if not self.proxies: return None
-        self.proxy_index = (self.proxy_index + 1) % len(self.proxies)
-        proxy = self.check_proxy_schemes(self.proxies[self.proxy_index])
-        self.account_proxies[account] = proxy
-        return proxy
+    async def get_web3_with_check(self, address, network):
+        # Proxy handling simple version for reliability
+        web3 = Web3(Web3.HTTPProvider(network["rpc_url"], request_kwargs={"timeout": 60}))
+        if web3.is_connected():
+            return web3
+        raise Exception("RPC ချိတ်ဆက်မှု မအောင်မြင်ပါ။")
 
-    def build_proxy_config(self, proxy=None):
-        if not proxy: return None, None, None
-        if proxy.startswith("socks"):
-            return ProxyConnector.from_url(proxy), None, None
-        elif proxy.startswith("http"):
-            match = re.match(r"http://(.*?):(.*?)@(.*)", proxy)
-            if match:
-                user, pw, hp = match.groups()
-                return None, f"http://{hp}", BasicAuth(user, pw)
-            return None, proxy, None
-        return None, None, None
-
-    def generate_address(self, account_key):
-        try: return Account.from_key(account_key).address
-        except: return None
-
-    def mask_account(self, address):
-        return f"{address[:6]}******{address[-6:]}" if address else "Unknown"
-
-    async def get_web3_with_check(self, address, network, use_proxy):
-        req_kwargs = {"timeout": 60}
-        proxy = self.get_next_proxy_for_account(address) if use_proxy else None
-        if use_proxy and proxy:
-            req_kwargs["proxies"] = {"http": proxy, "https": proxy}
-        web3 = Web3(Web3.HTTPProvider(network["rpc_url"], request_kwargs=req_kwargs))
-        return web3
-
-    async def get_token_balance(self, address, network, use_proxy):
+    async def get_token_balance(self, web3, address, network):
         try:
-            web3 = await self.get_web3_with_check(address, network, use_proxy)
-            return web3.from_wei(web3.eth.get_balance(address), "ether")
-        except: return None
-
-    async def time_until_next_gm(self, address, network, use_proxy):
-        try:
-            web3 = await self.get_web3_with_check(address, network, use_proxy)
-            contract = web3.eth.contract(address=web3.to_checksum_address(network["onchain_gm"]["contract"]), abi=self.CONTRACT_ABI)
-            return contract.functions.timeUntilNextGM(address).call()
+            balance = web3.eth.get_balance(address)
+            return web3.from_wei(balance, "ether")
         except: return 0
 
-    async def gm_fee(self, address, network, use_proxy):
+    async def perform_gm(self, account_key, address, network, use_proxy):
         try:
-            web3 = await self.get_web3_with_check(address, network, use_proxy)
-            contract = web3.eth.contract(address=web3.to_checksum_address(network["onchain_gm"]["contract"]), abi=self.CONTRACT_ABI)
-            return contract.functions.GM_FEE().call()
-        except: return 0
+            web3 = await self.get_web3_with_check(address, network)
+            contract_addr = web3.to_checksum_address(network["onchain_gm"]["contract"])
+            contract = web3.eth.contract(address=contract_addr, abi=self.CONTRACT_ABI)
+            
+            # Check GM Status first
+            self.log("GM Status စစ်ဆေးနေသည်...")
+            wait_time = contract.functions.timeUntilNextGM(address).call()
+            if wait_time > 0:
+                self.log(f"{Fore.YELLOW}GM လုပ်ပြီးသားဖြစ်နေသည်။ စောင့်ရန်အချိန်: {self.format_seconds(wait_time)}")
+                return None
 
-    async def perform_gm(self, account, address, network, gm_fee, use_proxy):
-        try:
-            web3 = await self.get_web3_with_check(address, network, use_proxy)
-            contract = web3.eth.contract(address=web3.to_checksum_address(network["onchain_gm"]["contract"]), abi=self.CONTRACT_ABI)
+            fee = contract.functions.GM_FEE().call()
+            self.log(f"GM Fee: {fee} wei. Transaction ပို့နေသည်...")
+
+            nonce = web3.eth.get_transaction_count(address)
+            gas_price = web3.eth.gas_price
+            
             gm_tx = contract.functions.onChainGM(address).build_transaction({
-                "from": address, "value": gm_fee, "nonce": web3.eth.get_transaction_count(address),
-                "gas": 200000, "maxFeePerGas": web3.to_wei(network["gas_fee"], "gwei"),
-                "maxPriorityFeePerGas": web3.to_wei(network["gas_fee"], "gwei"), "chainId": network["network_id"]
+                "from": address,
+                "value": fee,
+                "nonce": nonce,
+                "gas": 250000,
+                "gasPrice": int(gas_price * 1.1), # Gas Price ကို ၁၀% ပိုပေးထားသည်
+                "chainId": network["network_id"]
             })
-            signed = web3.eth.account.sign_transaction(gm_tx, account)
+            
+            signed = web3.eth.account.sign_transaction(gm_tx, account_key)
             tx_hash = web3.eth.send_raw_transaction(signed.raw_transaction)
-            receipt = web3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+            
+            self.log(f"Tx Hash: {web3.to_hex(tx_hash)}. Confirm ဖြစ်သည်အထိ စောင့်နေသည်...")
+            receipt = web3.eth.wait_for_transaction_receipt(tx_hash, timeout=180)
             return web3.to_hex(tx_hash), receipt.blockNumber
         except Exception as e:
-            self.log(f"{Fore.RED}GM Failed: {str(e)}")
+            self.log(f"{Fore.RED}GM Error: {str(e)}")
             return None, None
 
     def print_question(self):
@@ -158,41 +134,48 @@ class GM:
             self.deploy_count = int(input(f"{Fore.YELLOW}Enter Deploy Count -> ").strip())
         print(f"{Fore.WHITE}1. Run With Proxy\n2. Run Without Proxy")
         proxy_choice = int(input(f"{Fore.BLUE}Choose [1/2] -> ").strip())
-        rotate_proxy = input(f"{Fore.BLUE}Rotate Invalid Proxy? [y/n] -> ").strip().lower() == 'y' if proxy_choice == 1 else False
-        return option, proxy_choice, rotate_proxy
-
-    async def process_accounts(self, account, address, enabled_networks, option, use_proxy, rotate_proxy):
-        for network in enabled_networks:
-            self.log(f"Network: {network['network_name']}")
-            if option in [1, 3]:
-                wait_time = await self.time_until_next_gm(address, network, use_proxy)
-                if wait_time > 0:
-                    self.log(f"{Fore.YELLOW}GM already done. Next in {wait_time}s")
-                else:
-                    fee = await self.gm_fee(address, network, use_proxy)
-                    tx, block = await self.perform_gm(account, address, network, fee, use_proxy)
-                    if tx: self.log(f"{Fore.GREEN}GM Success! Block: {block} | Tx: {tx}")
+        return option, proxy_choice
 
     async def main(self):
         try:
+            if not os.path.exists('accounts.txt'):
+                self.log(f"{Fore.RED}accounts.txt မတွေ့ပါ။")
+                return
             with open('accounts.txt', 'r') as f:
                 accounts = [line.strip() for line in f if line.strip()]
-            option, proxy_choice, rotate_proxy = self.print_question()
+            
+            option, proxy_choice = self.print_question()
             use_proxy = (proxy_choice == 1)
             
             while True:
                 self.clear_terminal()
                 self.welcome()
+                self.log(f"စုစုပေါင်း Account: {len(accounts)}")
+                if use_proxy: await self.load_proxies()
+
                 for acc in accounts:
-                    addr = self.generate_address(acc)
-                    if not addr: continue
-                    self.log(f"--- [ {self.mask_account(addr)} ] ---")
-                    await self.process_accounts(acc, addr, [self.ARC_NETWORK], option, use_proxy, rotate_proxy)
-                
-                self.log("All accounts processed. Waiting 24h...")
+                    try:
+                        address = Account.from_key(acc).address
+                        self.log(f"{Fore.WHITE + Style.BRIGHT}--- [ {address[:6]}...{address[-6:]} ] ---")
+                        
+                        web3 = await self.get_web3_with_check(address, self.ARC_NETWORK)
+                        balance = await self.get_token_balance(web3, address, self.ARC_NETWORK)
+                        self.log(f"Balance: {balance} {self.ARC_NETWORK['ticker']}")
+
+                        if option in [1, 3]:
+                            result = await self.perform_gm(acc, address, self.ARC_NETWORK, use_proxy)
+                            if result:
+                                tx, block = result
+                                self.log(f"{Fore.GREEN}အောင်မြင်သည်။ Block: {block}")
+                        
+                        await asyncio.sleep(3)
+                    except Exception as e:
+                        self.log(f"{Fore.RED}Account Error: {e}")
+
+                self.log(f"{Fore.CYAN}အကုန်ပြီးပါပြီ။ ၂၄ နာရီ စောင့်ပါမည်...")
                 await asyncio.sleep(24 * 3600)
         except Exception as e:
-            self.log(f"Error: {e}")
+            self.log(f"Main Error: {e}")
 
 if __name__ == "__main__":
     bot = GM()
