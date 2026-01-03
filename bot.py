@@ -28,8 +28,8 @@ class GM:
                 "contract": "0x363cC75a89aE5673b427a1Fa98AFc48FfDE7Ba43"
             },
             "deploy": {
-                "contract": "0x363cC75a89aE5673b427a1Fa98AFc48FfDE7Ba43",
-                "amount": 0.5,
+                "contract": "0xa3d9Fbd0edB10327ECB73D2C72622E505dF468a2",
+                "amount": 1,
             },
             "gas_fee": 1.0
         }
