@@ -41,7 +41,7 @@ class GM:
             {Fore.GREEN + Style.BRIGHT}     ██╔══██║██║  ██║██╔══██╗    ██║╚██╗██║██║   ██║██║  ██║██╔══╝  
             {Fore.GREEN + Style.BRIGHT}     ██║  ██║██████╔╝██████╔╝    ██║ ╚████║╚██████╔╝██████╔╝███████╗
             {Fore.GREEN + Style.BRIGHT}     ╚═╝  ╚═╝╚═════╝ ╚═════╝     ╚═╝  ╚═══╝ ╚═════╝ ╚═════╝ ╚══════╝
-            {Fore.YELLOW + Style.BRIGHT}      Modified by ADB NODE
+            {Fore.YELLOW + Style.BRIGHT}      Created by ADB NODE
             """
         )
 
