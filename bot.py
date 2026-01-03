@@ -1,21 +1,18 @@
 from web3 import Web3
-from web3.exceptions import TransactionNotFound
 from eth_account import Account
-from aiohttp import ClientResponseError, ClientSession, ClientTimeout, BasicAuth
-from aiohttp_socks import ProxyConnector
-from fake_useragent import FakeUserAgent
 from datetime import datetime
 from dotenv import load_dotenv
 from colorama import *
-import asyncio, random, time, json, re, os, pytz
+import asyncio, os, pytz, time
 
 load_dotenv()
 
+# Set Timezone
 wib = pytz.timezone('Asia/Jakarta')
 
 class GM:
     def __init__(self) -> None:
-        self.BASE_API = "https://zevzyzupcazraidfuegn.supabase.co/rest/v1"
+        # Arc Testnet Configuration
         self.ARC_NETWORK = {
             "network_name": "Arc Testnet",
             "ticker": "USDC",
@@ -24,144 +21,151 @@ class GM:
             "network_id": 5042002,
             "onchain_gm": {
                 "contract": "0x363cC75a89aE5673b427a1Fa98AFc48FfDE7Ba43"
-            },
-            "gas_fee": 1.0 
+            }
         }
+        
+        # Your specific referrer address
         self.REFERRER = "0xc2fcFd1bF7CB2Cdd14A9B0dADB4FdcB845219D01"
         
+        # Minimized ABI for GM features
         self.CONTRACT_ABI = [
-            {"type": "function", "name": "timeUntilNextGM", "stateMutability": "view", "inputs": [{"internalType": "address", "name": "user", "type": "address"}], "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}]},
-            {"type": "function", "name": "GM_FEE", "stateMutability": "view", "inputs": [], "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}]},
-            {"type": "function", "name": "onChainGM", "stateMutability": "payable", "inputs": [{"internalType": "address", "name": "referrer", "type": "address"}], "outputs": []}
+            {
+                "type": "function", 
+                "name": "timeUntilNextGM", 
+                "stateMutability": "view", 
+                "inputs": [{"internalType": "address", "name": "user", "type": "address"}], 
+                "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}]
+            },
+            {
+                "type": "function", 
+                "name": "onChainGM", 
+                "stateMutability": "payable", 
+                "inputs": [{"internalType": "address", "name": "referrer", "type": "address"}], 
+                "outputs": []
+            }
         ]
-        self.HEADERS = {}
-        self.proxies = []
-        self.proxy_index = 0
-        self.account_proxies = {}
-
-    def clear_terminal(self):
-        os.system('cls' if os.name == 'nt' else 'clear')
 
     def log(self, message):
-        print(f"{Fore.CYAN + Style.BRIGHT}[ {datetime.now().astimezone(wib).strftime('%x %X %Z')} ]{Style.RESET_ALL} | {message}", flush=True)
+        print(
+            f"{Fore.CYAN + Style.BRIGHT}[ {datetime.now().astimezone(wib).strftime('%H:%M:%S')} ]{Style.RESET_ALL}"
+            f" | {message}", 
+            flush=True
+        )
 
     def welcome(self):
-        print(f"{Fore.GREEN + Style.BRIGHT}Arc Testnet {Fore.BLUE + Style.BRIGHT}Auto BOT")
+        print(f"{Fore.GREEN + Style.BRIGHT}Arc Testnet {Fore.BLUE + Style.BRIGHT}Auto GM BOT")
+        print(f"{Fore.WHITE}Referrer: {self.REFERRER}{Style.RESET_ALL}\n")
 
-    def format_seconds(self, seconds):
-        hours, remainder = divmod(seconds, 3600)
-        minutes, seconds = divmod(remainder, 60)
-        return f"{int(hours):02}:{int(minutes):02}:{int(seconds):02}"
-
-    async def get_web3(self, network):
-        return Web3(Web3.HTTPProvider(network["rpc_url"], request_kwargs={"timeout": 60}))
-
-    async def perform_gm(self, account_key, address, network):
+    async def perform_gm(self, account_key, address):
         try:
-            web3 = await self.get_web3(network)
-            contract_addr = web3.to_checksum_address(network["onchain_gm"]["contract"])
-            referrer_addr = web3.to_checksum_address(self.REFERRER)
+            web3 = Web3(Web3.HTTPProvider(self.ARC_NETWORK["rpc_url"]))
+            
+            # Connection Check
+            if not web3.is_connected():
+                self.log(f"{Fore.RED}RPC Connection Failed")
+                return None
+
+            contract_addr = web3.to_checksum_address(self.ARC_NETWORK["onchain_gm"]["contract"])
             contract = web3.eth.contract(address=contract_addr, abi=self.CONTRACT_ABI)
             
-            # 1. Check Cool-down
-            self.log("Checking GM status...")
+            # 1. Check Cool-down Status
+            self.log("Checking cool-down status...")
             wait_time = contract.functions.timeUntilNextGM(address).call()
-            if wait_time > 0:
-                self.log(f"{Fore.YELLOW}GM already performed. Wait for: {self.format_seconds(wait_time)}")
-                return None
-
-            # 2. Fixed Fee 0.5 USDC (Scaling by 10^18 for Wei)
-            fee = web3.to_wei(0.5, 'ether') 
-            self.log(f"GM Fee set to: 0.5 {network['ticker']}")
-
-            # 3. Transaction Preparation
-            nonce = web3.eth.get_transaction_count(address)
-            gas_price = web3.eth.gas_price
             
-            # 4. Gas Estimation to prevent Revert Failures
-            try:
-                gas_limit = contract.functions.onChainGM(referrer_addr).estimate_gas({
-                    "from": address, "value": fee, "nonce": nonce
-                })
-                gas_limit = int(gas_limit * 1.2) # Add 20% buffer
-            except Exception as e:
-                self.log(f"{Fore.RED}Gas Estimation Failed (Potential Revert): {str(e)}")
+            if wait_time > 0:
+                self.log(f"{Fore.YELLOW}In cool-down. Remaining: {wait_time}s")
                 return None
 
-            gm_tx = contract.functions.onChainGM(referrer_addr).build_transaction({
+            # 2. Setup Transaction Parameters
+            # Using 0.5 USDC as requested
+            fee = web3.to_wei(0.5, 'ether') 
+            nonce = web3.eth.get_transaction_count(address)
+            gas_price = int(web3.eth.gas_price * 1.2) # 20% Tip for faster inclusion
+            
+            self.log(f"Preparing GM with 0.5 {self.ARC_NETWORK['ticker']} fee...")
+
+            # 3. Build Transaction (Fixed Gas to bypass local revert check)
+            gm_tx = contract.functions.onChainGM(
+                web3.to_checksum_address(self.REFERRER)
+            ).build_transaction({
                 "from": address,
                 "value": fee,
                 "nonce": nonce,
-                "gas": gas_limit,
-                "gasPrice": int(gas_price * 1.1), # 10% tip for speed
-                "chainId": network["network_id"]
+                "gas": 400000, # Increased Fixed Gas Limit
+                "gasPrice": gas_price,
+                "chainId": self.ARC_NETWORK["network_id"]
             })
             
-            # 5. Signing and Sending
+            # 4. Sign and Broadcast
             signed = web3.eth.account.sign_transaction(gm_tx, account_key)
             tx_hash = web3.eth.send_raw_transaction(signed.raw_transaction)
             
-            self.log(f"Tx Sent: {web3.to_hex(tx_hash)}. Waiting for confirmation...")
+            hex_hash = web3.to_hex(tx_hash)
+            self.log(f"Tx Sent: {hex_hash}")
+            self.log("Waiting for confirmation on-chain...")
+            
+            # Wait for receipt
             receipt = web3.eth.wait_for_transaction_receipt(tx_hash, timeout=180)
             
             if receipt.status == 1:
-                return web3.to_hex(tx_hash), receipt.blockNumber
+                return hex_hash, receipt.blockNumber
             else:
-                self.log(f"{Fore.RED}Transaction Failed on Blockchain.")
+                self.log(f"{Fore.RED}Transaction REVERTED on-chain. Check explorer link below.")
+                self.log(f"Link: {self.ARC_NETWORK['explorer']}{hex_hash}")
                 return None
                 
         except Exception as e:
             self.log(f"{Fore.RED}Error: {str(e)}")
             return None
 
-    def print_question(self):
-        print(f"{Fore.GREEN}1. Onchain GM Only\n2. Run Loop (24h)")
-        option = int(input(f"{Fore.BLUE}Choose [1/2] -> ").strip())
-        return option
-
     async def main(self):
-        try:
-            with open('accounts.txt', 'r') as f:
-                accounts = [line.strip() for line in f if line.strip()]
+        self.clear_terminal()
+        self.welcome()
+
+        if not os.path.exists('accounts.txt'):
+            self.log(f"{Fore.RED}File 'accounts.txt' not found!")
+            return
             
-            option = self.print_question()
-            
-            while True:
-                self.clear_terminal()
-                self.welcome()
-                self.log(f"Total Accounts: {len(accounts)}")
+        with open('accounts.txt', 'r') as f:
+            accounts = [line.strip() for line in f if line.strip()]
 
-                for acc in accounts:
-                    try:
-                        address = Account.from_key(acc).address
-                        self.log(f"--- [ {address[:6]}...{address[-6:]} ] ---")
-                        
-                        web3 = await self.get_web3(self.ARC_NETWORK)
-                        balance = web3.from_wei(web3.eth.get_balance(address), 'ether')
-                        self.log(f"Balance: {balance} {self.ARC_NETWORK['ticker']}")
+        self.log(f"Total Accounts loaded: {len(accounts)}")
+        print("-" * 50)
 
-                        if balance < 0.5:
-                            self.log(f"{Fore.RED}Insufficient balance for GM fee (0.5).")
-                            continue
-
-                        result = await self.perform_gm(acc, address, self.ARC_NETWORK)
-                        if result:
-                            tx, block = result
-                            self.log(f"{Fore.GREEN}Success! Block: {block} | Tx: {tx}")
-                        
-                        await asyncio.sleep(5)
-                    except Exception as e:
-                        self.log(f"{Fore.RED}Account Process Error: {e}")
-
-                if option == 1:
-                    self.log("All accounts finished.")
-                    break
+        for acc in accounts:
+            try:
+                address = Account.from_key(acc).address
+                self.log(f"Processing: {Fore.WHITE}{address[:8]}...{address[-8:]}{Style.RESET_ALL}")
                 
-                self.log("Iteration complete. Sleeping for 24 hours...")
-                await asyncio.sleep(24 * 3600)
-        except Exception as e:
-            self.log(f"Main Loop Error: {e}")
+                # Check Balance
+                web3 = Web3(Web3.HTTPProvider(self.ARC_NETWORK["rpc_url"]))
+                balance = web3.from_wei(web3.eth.get_balance(address), 'ether')
+                self.log(f"Current Balance: {balance} {self.ARC_NETWORK['ticker']}")
+
+                if balance < 0.5:
+                    self.log(f"{Fore.RED}Balance too low (< 0.5). Skipping...")
+                    continue
+
+                result = await self.perform_gm(acc, address)
+                if result:
+                    tx, block = result
+                    self.log(f"{Fore.GREEN}SUCCESS! Confirmed in Block: {block}")
+                    self.log(f"Explorer: {self.ARC_NETWORK['explorer']}{tx}")
+                
+                print("-" * 50)
+                await asyncio.sleep(3) # Short delay between accounts
+
+            except Exception as e:
+                self.log(f"{Fore.RED}Critical Account Error: {e}")
+
+        self.log(f"{Fore.BLUE}All tasks completed. Finished.")
+
+    def clear_terminal(self):
+        os.system('cls' if os.name == 'nt' else 'clear')
 
 if __name__ == "__main__":
     bot = GM()
-    asyncio.run(bot.main())
+    try:
+        asyncio.run(bot.main())
+    except KeyboardInterrupt:
+        print(f"\n{Fore.YELLOW}Bot stopped by user.")
