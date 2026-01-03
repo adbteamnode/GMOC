@@ -29,7 +29,7 @@ class GM:
             },
             "deploy": {
                 "contract": "0xa3d9Fbd0edB10327ECB73D2C72622E505dF468a2",
-                "amount": 1,
+                "amount": 0.5,
             },
             "gas_fee": 1.0 # Gwei
         }
